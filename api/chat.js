@@ -1,14 +1,8 @@
-"""
-Richard Aceves AI Chatbot — Vercel Serverless Function
-Endpoint: /api/chat
-"""
+export const config = {
+  runtime: 'edge',
+};
 
-import json
-import os
-from http.server import BaseHTTPRequestHandler
-import anthropic
-
-SYSTEM_PROMPT = """You are Richard Aceves — movement coach, educator, and founder of Moved Academy, Sandbag University, and Movement Ayahuasca retreat experiences. You communicate directly from your own voice, drawing on your actual coaching philosophy, 18+ years of experience, and the methodology documented in your Moved Academy guidebook.
+const SYSTEM_PROMPT = `You are Richard Aceves — movement coach, educator, and founder of Moved Academy, Sandbag University, and Movement Ayahuasca retreat experiences. You communicate directly from your own voice, drawing on your actual coaching philosophy, 18+ years of experience, and the methodology documented in your Moved Academy guidebook.
 
 ---
 
@@ -152,72 +146,125 @@ Breathwork (Swami methodology) — Exhale through effort for expression. Inhale 
 - If someone describes a complex multi-year condition, recommend a 1-on-1 assessment through Moved Academy
 - Keep responses focused and actionable — 2-3 specific things to try, not a wall of theory
 
-START each new conversation with a short, warm greeting and ask what brings them in today.
-"""
+START each new conversation with a short, warm greeting and ask what brings them in today.`;
 
+export default async function handler(req) {
+  // Handle CORS preflight
+  if (req.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 200,
+      headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      },
+    });
+  }
 
-class handler(BaseHTTPRequestHandler):
+  if (req.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self._send_cors_headers()
-        self.end_headers()
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY is not set' }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
-    def do_POST(self):
-        content_length = int(self.headers.get('Content-Length', 0))
-        body = self.rfile.read(content_length)
+  let messages;
+  try {
+    const body = await req.json();
+    messages = body.messages || [];
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
-        try:
-            data = json.loads(body)
-            messages = data.get('messages', [])
-        except Exception:
-            self.send_response(400)
-            self._send_cors_headers()
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({'error': 'Invalid JSON'}).encode())
-            return
+  // Call Anthropic API with streaming
+  const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-3-5-sonnet-20241022',
+      max_tokens: 1200,
+      system: SYSTEM_PROMPT,
+      messages,
+      stream: true,
+    }),
+  });
 
-        api_key = os.environ.get('ANTHROPIC_API_KEY', '')
-        if not api_key:
-            self.send_response(500)
-            self._send_cors_headers()
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(json.dumps({'error': 'API key not configured'}).encode())
-            return
+  if (!anthropicRes.ok) {
+    const err = await anthropicRes.text();
+    return new Response(JSON.stringify({ error: err }), {
+      status: anthropicRes.status,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
-        client = anthropic.Anthropic(api_key=api_key)
+  // Transform Anthropic's SSE stream into our simple SSE format
+  const encoder = new TextEncoder();
+  const decoder = new TextDecoder();
 
-        self.send_response(200)
-        self._send_cors_headers()
-        self.send_header('Content-Type', 'text/event-stream')
-        self.send_header('Cache-Control', 'no-cache')
-        self.send_header('X-Accel-Buffering', 'no')
-        self.end_headers()
+  const stream = new ReadableStream({
+    async start(controller) {
+      const reader = anthropicRes.body.getReader();
+      let buffer = '';
 
-        try:
-            with client.messages.stream(
-                model="claude-3-5-sonnet-20241022",
-                max_tokens=1200,
-                system=SYSTEM_PROMPT,
-                messages=messages,
-            ) as stream:
-                for text in stream.text_stream:
-                    chunk = f"data: {json.dumps({'text': text})}\n\n"
-                    self.wfile.write(chunk.encode())
-                    self.wfile.flush()
-            self.wfile.write(b"data: [DONE]\n\n")
-            self.wfile.flush()
-        except Exception as e:
-            error_chunk = f"data: {json.dumps({'error': str(e)})}\n\n"
-            self.wfile.write(error_chunk.encode())
-            self.wfile.flush()
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
 
-    def _send_cors_headers(self):
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
-        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // keep incomplete last line
 
-    def log_message(self, format, *args):
-        pass  # Suppress default logging
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const data = line.slice(6).trim();
+            if (data === '[DONE]') continue;
+
+            try {
+              const parsed = JSON.parse(data);
+              // Anthropic sends content_block_delta events with the text
+              if (
+                parsed.type === 'content_block_delta' &&
+                parsed.delta?.type === 'text_delta' &&
+                parsed.delta?.text
+              ) {
+                const chunk = `data: ${JSON.stringify({ text: parsed.delta.text })}\n\n`;
+                controller.enqueue(encoder.encode(chunk));
+              }
+            } catch {
+              // skip malformed lines
+            }
+          }
+        }
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+      } catch (err) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: err.message })}\n\n`));
+      } finally {
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Access-Control-Allow-Origin': '*',
+    },
+  });
+}
