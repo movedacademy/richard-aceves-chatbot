@@ -117,10 +117,25 @@
     const indicator = document.createElement('div');
     indicator.classList.add('message', 'assistant', 'typing-indicator');
     indicator.id = 'typing-indicator';
-    indicator.innerHTML = `
-      <img src="./assets/avatar.jpg" alt="Richard" class="msg-avatar" onerror="this.outerHTML='<div class=\\"msg-avatar\\" style=\\"background:var(--color-primary);display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:var(--text-sm)\\">R</div>'">
-      <div class="msg-bubble"><div class="dots"><span></span><span></span><span></span></div></div>
-    `;
+
+    const avatarEl = document.createElement('img');
+    avatarEl.src = './assets/avatar.jpg';
+    avatarEl.alt = 'Richard';
+    avatarEl.className = 'msg-avatar';
+    avatarEl.onerror = function () {
+      const div = document.createElement('div');
+      div.className = 'msg-avatar';
+      div.style.cssText = 'background:var(--color-primary);display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:var(--text-sm);';
+      div.textContent = 'R';
+      this.replaceWith(div);
+    };
+
+    const bubbleEl = document.createElement('div');
+    bubbleEl.className = 'msg-bubble';
+    bubbleEl.innerHTML = '<div class="dots"><span></span><span></span><span></span></div>';
+
+    indicator.appendChild(avatarEl);
+    indicator.appendChild(bubbleEl);
     messagesContainer.appendChild(indicator);
     scrollToBottom();
   }
