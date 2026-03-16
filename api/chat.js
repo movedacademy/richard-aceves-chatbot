@@ -168,9 +168,10 @@ export default async function handler(req) {
     });
   }
 
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.AI_GATEWAY_API_KEY;
+
   if (!apiKey) {
-    return new Response(JSON.stringify({ error: 'ANTHROPIC_API_KEY is not set' }), {
+    return new Response(JSON.stringify({ error: 'AI_GATEWAY_API_KEY is not set' }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -187,8 +188,8 @@ export default async function handler(req) {
     });
   }
 
-  // Call Anthropic API with streaming
-  const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+  // Call Vercel AI Gateway (Anthropic-compatible Messages API) with streaming
+  const anthropicRes = await fetch('https://ai-gateway.vercel.sh/v1/messages', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -196,7 +197,7 @@ export default async function handler(req) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-3-5-sonnet-20241022',
+      model: 'anthropic/claude-sonnet-4-20250514',
       max_tokens: 1200,
       system: SYSTEM_PROMPT,
       messages,

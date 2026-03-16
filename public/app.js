@@ -51,17 +51,27 @@
 
   // ─── Message Rendering ───────────────────────────────────
   function parseMarkdown(text) {
-    return text
+    const safe = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+
+    return safe
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
-      .replace(/^• /gm, '')
-      .replace(/^- (.*)/gm, '<li>$1</li>')
-      .replace(/^\d+\. (.*)/gm, '<li>$1</li>')
-      .replace(/(<li>.*<\/li>\n?)+/g, match => `<ul>${match}</ul>`)
+      .replace(/^(?:•|-)\s+(.*)/gm, '<ul-li>$1</ul-li>')
+      .replace(/^\d+\.\s+(.*)/gm, '<ol-li>$1</ol-li>')
+      .replace(/((?:<ul-li>.*<\/ul-li>\n?)+)/g, match =>
+        '<ul>' + match.replace(/<\/?ul-li>/g, m => m === '<ul-li>' ? '<li>' : '</li>') + '</ul>'
+      )
+      .replace(/((?:<ol-li>.*<\/ol-li>\n?)+)/g, match =>
+        '<ol>' + match.replace(/<\/?ol-li>/g, m => m === '<ol-li>' ? '<li>' : '</li>') + '</ol>'
+      )
       .split('\n\n')
       .map(para => para.trim())
       .filter(p => p)
-      .map(para => para.startsWith('<ul>') || para.startsWith('<ol>') ? para : `<p>${para}</p>`)
+      .map(para => (para.startsWith('<ul>') || para.startsWith('<ol>')) ? para : `<p>${para}</p>`)
       .join('');
   }
 
@@ -156,6 +166,7 @@
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let fullText = '';
+      let sseBuffer = '';
 
       // Create streaming bubble
       const { bubbleEl } = addMessage('assistant', '', true);
@@ -164,8 +175,9 @@
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop();
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
